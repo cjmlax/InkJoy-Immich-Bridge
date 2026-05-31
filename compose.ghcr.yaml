@@ -1,0 +1,13 @@
+# Registry version: pulls the prebuilt image from GHCR instead of building.
+# Replace YOUR_USER with your GitHub username (lowercase). The Dockge stack
+# only needs THIS file + your .env -- no Dockerfile or app/ folder required.
+
+services:
+  inkjoy-bridge:
+    image: ghcr.io/YOUR_USER/immich-inkjoy-bridge:latest
+    container_name: inkjoy-bridge
+    restart: unless-stopped
+    pull_policy: always        # "recreate" in Dockge will grab the newest pushed image
+    env_file: .env
+    environment:
+      - TZ=${TIMEZONE:-America/New_York}
