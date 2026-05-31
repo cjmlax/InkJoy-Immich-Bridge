@@ -227,9 +227,11 @@ def build_strategy_body(device_id, album_id):
         "timezone": TIMEZONE,
         "strategyType": STRATEGY_TYPE,
         "updateType": UPDATE_TYPE,
+        "updateDays": UPDATE_DAYS,
         "idle": IDLE_AFTER,
         "playNow": True,
         "status": "ACTIVE",
+        
     }
     if UPDATE_TYPE == "FIXED":
         body["updateTimeList"] = UPDATE_TIMES
