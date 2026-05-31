@@ -67,6 +67,7 @@ TIMEZONE          = env_str("TIMEZONE", "America/New_York")
 # Carousel behaviour
 PLAY_ORDER    = env_str("PLAY_ORDER", "SHUFFLE")
 UPDATE_TYPE   = env_str("UPDATE_TYPE", "FIXED")
+UPDATE_DAYS = env_int("UPDATE_DAYS", 1)    # repeat the schedule every N days
 UPDATE_TIMES  = env_list("UPDATE_TIMES", ["08:00", "13:00", "18:00", "22:00"])
 INTERVAL_MIN  = env_int("INTERVAL_MIN", 120)
 ACTIVE_BEGIN  = env_str("ACTIVE_BEGIN", "08:00")
