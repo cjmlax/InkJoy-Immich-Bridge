@@ -34,3 +34,23 @@ sync. Then set them back.
 - `SYNC_INTERVAL_MINUTES` = how often the bridge refreshes the album from Immich.
 - `UPDATE_TIMES` / `INTERVAL_MIN` = how often the frame advances photos (InkJoy side).
 - If the InkJoy calls return an error code, the log prints the API `msg`.
+
+## Method C — referenceable image via GHCR (recommended)
+`.github/workflows/docker-publish.yml` builds the image on every push to `main`
+and publishes it to `ghcr.io/YOUR_USER/immich-inkjoy-bridge`. Then use
+`compose.ghcr.yaml`, which references it with `image:` (no local build).
+
+First-time setup:
+1. Push this repo (including the `.github/` folder) to GitHub.
+2. The Action runs automatically; check the Actions tab for a green build.
+3. Find the new package under your GitHub profile -> Packages.
+4. Make it Public (Package settings -> Change visibility) so Dockge can pull
+   without credentials. The image holds only code -- your secrets stay in `.env`
+   at runtime -- so public is safe.
+   - If you keep it Private instead, run once on the Docker host:
+     `docker login ghcr.io -u YOUR_USER` with a Personal Access Token that has
+     `read:packages`, so Dockge can pull it.
+5. In Dockge, create a stack with `compose.ghcr.yaml` + your `.env`.
+
+Updating later: push to `main` (rebuilds + republishes), then in Dockge hit
+recreate. `pull_policy: always` ensures the newest image is fetched.
