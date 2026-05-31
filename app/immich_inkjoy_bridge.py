@@ -19,6 +19,8 @@ import io
 import os
 import sys
 import time
+import json
+import hashlib
 import traceback
 import requests
 from PIL import Image, ImageOps
@@ -54,7 +56,7 @@ def env_list(key, default):
 IMMICH_URL      = env_str("IMMICH_URL", "http://immich-host:2283/api")
 IMMICH_API_KEY  = env_str("IMMICH_API_KEY")
 IMMICH_ALBUM_ID = env_str("IMMICH_ALBUM_ID")
-MAX_PHOTOS      = env_int("MAX_PHOTOS", 30)
+MAX_PHOTOS      = env_int("MAX_PHOTOS", 0)   # 0 (or blank) = pull all photos in the album
 
 # InkJoy
 INKJOY_BASE       = env_str("INKJOY_BASE", "https://openapi.inkjoyframe.com")
@@ -67,8 +69,8 @@ TIMEZONE          = env_str("TIMEZONE", "America/New_York")
 # Carousel behaviour
 PLAY_ORDER    = env_str("PLAY_ORDER", "SHUFFLE")
 UPDATE_TYPE   = env_str("UPDATE_TYPE", "FIXED")
-UPDATE_DAYS = env_int("UPDATE_DAYS", 1)    # repeat the schedule every N days
 UPDATE_TIMES  = env_list("UPDATE_TIMES", ["08:00", "13:00", "18:00", "22:00"])
+UPDATE_DAYS   = env_int("UPDATE_DAYS", 1)    # repeat the schedule every N days (1 = daily)
 INTERVAL_MIN  = env_int("INTERVAL_MIN", 120)
 ACTIVE_BEGIN  = env_str("ACTIVE_BEGIN", "08:00")
 ACTIVE_END    = env_str("ACTIVE_END", "22:00")
@@ -81,6 +83,11 @@ RESIZE_TO_PANEL = env_bool("RESIZE_TO_PANEL", True)
 # Scheduler
 SYNC_INTERVAL_MINUTES = env_int("SYNC_INTERVAL_MINUTES", 720)   # how often the bridge refreshes the album
 RUN_ONCE              = env_bool("RUN_ONCE", False)
+
+# Sync behaviour
+STATE_PATH       = env_str("STATE_PATH", "/data/state.json")  # persisted across runs (mount a volume at /data)
+UPLOAD_DELAY_SEC = float(env_str("UPLOAD_DELAY_SEC", "0") or "0")  # pause between uploads to be gentle on the API
+FORCE_RESYNC     = env_bool("FORCE_RESYNC", False)            # ignore the saved fingerprint and re-upload everything
 
 REQ_TIMEOUT = 60
 
@@ -100,7 +107,8 @@ def pick_immich_assets():
                      headers=immich_headers(), timeout=REQ_TIMEOUT)
     r.raise_for_status()
     assets = [a for a in r.json().get("assets", []) if a.get("type") == "IMAGE"]
-    return [a["id"] for a in assets[:MAX_PHOTOS]]
+    ids = [a["id"] for a in assets]
+    return ids if MAX_PHOTOS <= 0 else ids[:MAX_PHOTOS]
 
 
 def immich_download(asset_id) -> bytes:
@@ -231,7 +239,6 @@ def build_strategy_body(device_id, album_id):
         "idle": IDLE_AFTER,
         "playNow": True,
         "status": "ACTIVE",
-        
     }
     if UPDATE_TYPE == "FIXED":
         body["updateTimeList"] = UPDATE_TIMES
@@ -240,6 +247,33 @@ def build_strategy_body(device_id, album_id):
         body["endTime"] = ACTIVE_END
         body["intervalMinutes"] = INTERVAL_MIN
     return body
+
+
+def load_state():
+    try:
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
+        with open(STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        print(f"Warning: could not persist state to {STATE_PATH}: {e} "
+              f"(album will re-upload every run without a mounted volume).", flush=True)
+
+
+def fingerprint(asset_ids):
+    """Stable signature of the desired album contents. Changes only when the
+    set of Immich photos changes, so we can skip re-uploading otherwise."""
+    h = hashlib.sha256()
+    for aid in sorted(asset_ids):
+        h.update(aid.encode())
+    return h.hexdigest()
 
 
 def sync_once():
@@ -256,17 +290,38 @@ def sync_once():
     album_id = ensure_album(inkjoy, INKJOY_ALBUM_NAME)
     print(f"Album '{INKJOY_ALBUM_NAME}' -> {album_id}", flush=True)
 
-    existing = inkjoy.list_album_photos(album_id)
-    if existing:
-        inkjoy.remove_photos(album_id, [p["imgId"] for p in existing])
-        print(f"Cleared {len(existing)} old photo(s).", flush=True)
-
     asset_ids = pick_immich_assets()
-    print(f"Uploading {len(asset_ids)} photo(s) from Immich...", flush=True)
-    for i, aid in enumerate(asset_ids, 1):
-        jpeg = prepare_image(immich_download(aid), pw, ph)
-        inkjoy.add_photo(album_id, jpeg, filename=f"{aid}.jpg")
-        print(f"  [{i}/{len(asset_ids)}] {aid}", flush=True)
+    sig = fingerprint(asset_ids)
+    state = load_state()
+    unchanged = (state.get("signature") == sig and state.get("albumId") == album_id)
+
+    if unchanged and not FORCE_RESYNC:
+        print(f"No changes ({len(asset_ids)} photos); skipping upload.", flush=True)
+    else:
+        existing = inkjoy.list_album_photos(album_id)
+        if existing:
+            inkjoy.remove_photos(album_id, [p["imgId"] for p in existing])
+            print(f"Cleared {len(existing)} old photo(s).", flush=True)
+
+        print(f"Uploading {len(asset_ids)} photo(s) from Immich...", flush=True)
+        uploaded = 0
+        for i, aid in enumerate(asset_ids, 1):
+            try:
+                jpeg = prepare_image(immich_download(aid), pw, ph)
+                inkjoy.add_photo(album_id, jpeg, filename=f"{aid}.jpg")
+                uploaded += 1
+                print(f"  [{i}/{len(asset_ids)}] {aid}", flush=True)
+                if UPLOAD_DELAY_SEC:
+                    time.sleep(UPLOAD_DELAY_SEC)
+            except Exception as e:
+                # Don't let one bad photo abort the whole album.
+                print(f"  [{i}/{len(asset_ids)}] {aid} FAILED: {e}", flush=True)
+        # Only record the fingerprint if the full set uploaded cleanly, so a
+        # partial failure retries next run instead of being treated as done.
+        if uploaded == len(asset_ids):
+            save_state({"signature": sig, "albumId": album_id})
+        else:
+            print(f"Uploaded {uploaded}/{len(asset_ids)}; will retry the rest next run.", flush=True)
 
     body = build_strategy_body(dev["deviceId"], album_id)
     strategies = inkjoy.list_strategies(dev["deviceId"])

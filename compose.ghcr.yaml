@@ -10,3 +10,8 @@ services:
     env_file: .env
     environment:
       - TZ=${TIMEZONE:-America/New_York}
+    volumes:
+     - inkjoy-state:/data        # persists the sync fingerprint so it only re-uploads on change
+
+volumes:
+  inkjoy-state:

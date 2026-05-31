@@ -18,6 +18,8 @@ services:
     env_file: .env
     environment:
       - TZ=${TIMEZONE:-America/New_York}
+    volumes:
+      - inkjoy-state:/data        # persists the sync fingerprint so it only re-uploads on change
 
     # The container needs to reach BOTH your Immich server (LAN) and the
     # InkJoy cloud (internet). Default bridge networking handles both as long
@@ -32,3 +34,6 @@ services:
 # networks:
 #   immich_default:
 #     external: true
+
+volumes:
+  inkjoy-state:
