@@ -57,6 +57,7 @@ IMMICH_URL      = env_str("IMMICH_URL", "http://immich-host:2283/api")
 IMMICH_API_KEY  = env_str("IMMICH_API_KEY")
 IMMICH_ALBUM_ID = env_str("IMMICH_ALBUM_ID")
 MAX_PHOTOS      = env_int("MAX_PHOTOS", 0)   # 0 (or blank) = pull all photos in the album
+IMMICH_IMAGE_SIZE = env_str("IMMICH_IMAGE_SIZE", "preview")  # 'preview' (JPEG, handles HEIC/RAW) or 'original'
 
 # InkJoy
 INKJOY_BASE       = env_str("INKJOY_BASE", "https://openapi.inkjoyframe.com")
@@ -112,8 +113,14 @@ def pick_immich_assets():
 
 
 def immich_download(asset_id) -> bytes:
-    r = requests.get(f"{IMMICH_URL}/assets/{asset_id}/original",
-                     headers=immich_headers(), timeout=REQ_TIMEOUT)
+    # 'preview' returns a web-friendly JPEG for every asset (incl. HEIC/RAW),
+    # which is plenty for an e-ink panel. 'original' serves the source file,
+    # which Pillow can't decode for HEIC/RAW.
+    if IMMICH_IMAGE_SIZE == "original":
+        url = f"{IMMICH_URL}/assets/{asset_id}/original"
+    else:
+        url = f"{IMMICH_URL}/assets/{asset_id}/thumbnail?size=preview"
+    r = requests.get(url, headers=immich_headers(), timeout=REQ_TIMEOUT)
     r.raise_for_status()
     return r.content
 
