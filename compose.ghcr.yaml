@@ -4,10 +4,9 @@
 
 services:
   inkjoy-bridge:
-    image: ghcr.io/YOUR_USER/immich-inkjoy-bridge:latest
+    image: ghcr.io/cjmlax/inkjoy-immich-bridge:latest
     container_name: inkjoy-bridge
     restart: unless-stopped
-    pull_policy: always        # "recreate" in Dockge will grab the newest pushed image
     env_file: .env
     environment:
       - TZ=${TIMEZONE:-America/New_York}
